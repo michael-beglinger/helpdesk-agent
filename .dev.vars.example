@@ -1,0 +1,7 @@
+# Kopieren nach ".dev.vars" für lokales Testen mit `wrangler dev` (Datei nicht committen).
+TRELLO_API_KEY=
+TRELLO_TOKEN=
+ANTHROPIC_API_KEY=
+GOOGLE_SERVICE_ACCOUNT_EMAIL=
+GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=
+SLACK_WEBHOOK_URL=

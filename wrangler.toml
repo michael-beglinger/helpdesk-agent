@@ -1,0 +1,16 @@
+name = "viridis-helpdesk"
+main = "src/index.ts"
+compatibility_date = "2024-09-01"
+
+[triggers]
+crons = ["*/5 * * * *", "0 16 * * *"]
+
+[[kv_namespaces]]
+binding = "VIRIDIS_LOG"
+id = "0565cc071b814ef18971ce90b5b492a8"
+
+[vars]
+FROM_EMAIL = "helpdesk@beglingerpartners.com"
+FROM_NAME = "Viridis – Beglinger Partners"
+AUTOMATION_CONFIDENCE_THRESHOLD = "0.85"
+DIGEST_RECIPIENT = "michael.beglinger@beglingerpartners.com"
