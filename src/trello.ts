@@ -58,6 +58,17 @@ export async function setCardDue(env: Env, cardId: string, dueIso: string): Prom
   });
 }
 
+/**
+ * Markiert eine Karte als "vollständig" (grünes Häkchen). Funktioniert seit
+ * der entsprechenden Trello-Änderung auch ohne gesetztes Fälligkeitsdatum
+ * (dueComplete=true allein reicht aus).
+ */
+export async function markCardComplete(env: Env, cardId: string): Promise<void> {
+  await trelloFetch(env, `/cards/${cardId}?dueComplete=true`, {
+    method: "PUT",
+  });
+}
+
 /** Weist ein Mitglied einer Karte zu (für Eskalationen). */
 export async function addMemberToCard(env: Env, cardId: string, memberId: string): Promise<void> {
   await trelloFetch(env, `/cards/${cardId}/idMembers`, {

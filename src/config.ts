@@ -18,6 +18,7 @@ export const LISTS = {
   blocked: "6985c8ccbd9ba86a4ec4a5f3",
   inReview: "6985c8d5384992effdc0c2c0",
   done: "6985c8890ea5d7f51c2a8b44",
+  doneByViridis: "6a71b63524bc0a430efd42bb", // "Done by Viridis" — automatisch beantwortete Tickets
 } as const;
 
 export const CATEGORY_LABELS: Record<"Standard" | "Technical" | "Complaint" | "Unclear", string> = {

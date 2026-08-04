@@ -2,6 +2,7 @@ import {
   addCommentToCard,
   addLabelToCard,
   getCardsInList,
+  markCardComplete,
   moveCardToList,
 } from "./trello";
 import { classifyEmail } from "./classify";
@@ -59,7 +60,7 @@ async function processCard(env: Env, card: TrelloCard): Promise<void> {
       card.id,
       `Viridis: als System-Benachrichtigung erkannt (${classification.begruendung}). Keine Kundenantwort, keine Eskalation.`
     );
-    await moveCardToList(env, card.id, LISTS.done);
+    await moveCardToList(env, card.id, LISTS.backlog);
     return;
   }
 
@@ -87,7 +88,8 @@ async function processCard(env: Env, card: TrelloCard): Promise<void> {
       card.id,
       `Viridis hat automatisiert geantwortet (Konfidenz ${classification.konfidenz.toFixed(2)}):\n\n${replyText}`
     );
-    await moveCardToList(env, card.id, LISTS.done);
+    await moveCardToList(env, card.id, LISTS.doneByViridis);
+    await markCardComplete(env, card.id);
 
     try {
       await logTicket(env, { cardName: card.name, cardUrl: card.shortUrl, status: "beantwortet" });
