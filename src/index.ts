@@ -12,6 +12,12 @@ import { extractEmailFromCard } from "./parse";
 import { notifySlackEscalation } from "./slack";
 import { logTicket, sendDailyDigest } from "./digest";
 import {
+  getDailyCount,
+  hasAlertedToday,
+  incrementDailyCount,
+  markAlertedToday,
+} from "./ratelimit";
+import {
   CATEGORY_LABELS,
   CUSTOMER_LABELS,
   DOMAIN_TO_CUSTOMER_LABEL,
@@ -133,16 +139,60 @@ async function processCard(env: Env, card: TrelloCard): Promise<void> {
   }
 }
 
+/**
+ * Tages-Rate-Limit erreicht: Karte wird ohne (kostenpflichtige) KI-
+ * Klassifizierung direkt ans Team eskaliert, statt liegen zu bleiben.
+ * Pro Tag wird nur einmal eine Slack-Warnung verschickt, nicht bei jeder
+ * betroffenen Karte einzeln.
+ */
+async function escalateForDailyLimit(env: Env, card: TrelloCard, limit: number): Promise<void> {
+  await addCommentToCard(
+    env,
+    card.id,
+    `⚠️ Viridis: Tages-Limit von ${limit} automatisiert verarbeiteten Tickets erreicht. Karte wird ohne KI-Klassifizierung direkt ans Team eskaliert. Das Limit setzt sich um Mitternacht (UTC) zurück.`
+  );
+  await moveCardToList(env, card.id, LISTS.escalated);
+
+  if (!(await hasAlertedToday(env))) {
+    try {
+      await notifySlackEscalation(env, {
+        cardName: card.name,
+        cardUrl: card.shortUrl,
+        kategorie: "—",
+        dringlichkeit: "—",
+        begruendung: `Tages-Limit von ${limit} Anthropic-Aufrufen erreicht. Weitere Tickets werden bis Mitternacht (UTC) ohne KI-Klassifizierung direkt ans Team eskaliert.`,
+      });
+    } catch (err) {
+      console.error("Slack-Benachrichtigung (Tageslimit) fehlgeschlagen:", err);
+    }
+    await markAlertedToday(env);
+  }
+
+  try {
+    await logTicket(env, { cardName: card.name, cardUrl: card.shortUrl, status: "eskaliert" });
+  } catch (err) {
+    console.error(`Digest-Protokollierung fehlgeschlagen für Karte ${card.id}:`, err);
+  }
+}
+
 async function runOnce(env: Env): Promise<{ processed: number; errors: number }> {
   const cards = await getCardsInList(env, LISTS.inbox);
   const unprocessed = cards.filter(isUnprocessed);
+
+  const dailyLimit = Number(env.DAILY_TICKET_LIMIT || "20");
+  let dailyCount = await getDailyCount(env);
 
   let processed = 0;
   let errors = 0;
 
   for (const card of unprocessed) {
     try {
-      await processCard(env, card);
+      if (dailyCount >= dailyLimit) {
+        await escalateForDailyLimit(env, card, dailyLimit);
+      } else {
+        await processCard(env, card);
+        dailyCount = await incrementDailyCount(env);
+      }
       processed++;
     } catch (err) {
       errors++;

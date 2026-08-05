@@ -7,6 +7,7 @@ export interface Env {
   FROM_EMAIL: string;
   FROM_NAME: string;
   AUTOMATION_CONFIDENCE_THRESHOLD: string;
+  DAILY_TICKET_LIMIT: string;
   SLACK_WEBHOOK_URL: string;
   DIGEST_RECIPIENT: string;
   VIRIDIS_LOG: KVNamespace;
