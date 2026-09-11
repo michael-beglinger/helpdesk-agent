@@ -7,7 +7,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "tsx test/run-tests.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:secrets": "tsx scripts/check-secrets.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260804.1",
