@@ -201,3 +201,4 @@ src/
 test/
   run-tests.ts  Tests für die reine Logik, ohne Live-API-Aufrufe (`npm test`)
 ```
+
