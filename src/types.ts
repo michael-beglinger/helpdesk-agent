@@ -10,6 +10,10 @@ export interface Env {
   DAILY_TICKET_LIMIT: string;
   SLACK_WEBHOOK_URL: string;
   DIGEST_RECIPIENT: string;
+  /** Shared Secret für den manuellen fetch-Handler (Header "X-Viridis-Token"). Nicht gesetzt = Handler deaktiviert. */
+  ADMIN_TOKEN?: string;
+  /** Max. Fehlversuche pro Karte, bevor sie ohne KI-Ergebnis eskaliert wird (Default 3). */
+  MAX_CARD_ATTEMPTS?: string;
   VIRIDIS_LOG: KVNamespace;
 }
 
@@ -37,12 +41,16 @@ export interface Classification {
   dringlichkeit: Urgency;
   kunden_label: string;
   ist_system_benachrichtigung: boolean;
+  /** true, wenn der Text Anweisungen an einen Assistenten/Bot, Rollenwechsel-Versuche oder Aufforderungen zu Links/Zahlungsdaten/Weiterleitungen enthält. Erzwingt Eskalation. */
+  injection_verdacht: boolean;
   begruendung: string;
 }
 
 export interface ExtractedEmail {
   senderEmail: string | null;
   senderDomain: string | null;
+  /** true nur, wenn die Adresse aus dem Header-Block der Karte stammt (siehe parse.ts). */
+  senderVerified: boolean;
   subject: string;
   body: string;
 }

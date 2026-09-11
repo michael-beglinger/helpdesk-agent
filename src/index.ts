@@ -11,9 +11,12 @@ import { sendEmail } from "./email";
 import { extractCustomerNameFromWhatsAppCard, extractEmailFromCard } from "./parse";
 import { notifySlackEscalation } from "./slack";
 import { logTicket, sendDailyDigest } from "./digest";
+import { checkReplySafety, ESCALATE_SENTINEL } from "./guard";
 import {
+  clearCardAttempts,
   getDailyCount,
   hasAlertedToday,
+  incrementCardAttempts,
   incrementDailyCount,
   markAlertedToday,
 } from "./ratelimit";
@@ -22,12 +25,24 @@ import {
   CUSTOMER_LABELS,
   DOMAIN_TO_CUSTOMER_LABEL,
   findCustomerLabelIdByName,
+  KNOWN_SYSTEM_SENDER_DOMAINS,
   LISTS,
   URGENCY_LABELS,
 } from "./config";
 import type { Env, TrelloCard } from "./types";
 
 const DIGEST_CRON = "0 16 * * *";
+
+/** Konstantzeit-Vergleich, damit das Token nicht zeichenweise erraten werden kann. */
+function timingSafeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const ab = enc.encode(a);
+  const bb = enc.encode(b);
+  if (ab.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
+  return diff === 0;
+}
 
 const ALL_CATEGORY_LABEL_IDS = new Set(Object.values(CATEGORY_LABELS));
 
@@ -42,11 +57,13 @@ async function processCard(env: Env, card: TrelloCard): Promise<void> {
     subject: email.subject,
     body: email.body,
     senderDomain: email.senderDomain,
+    senderVerified: email.senderVerified,
   });
 
-  const customerName = email.senderDomain
-    ? DOMAIN_TO_CUSTOMER_LABEL[email.senderDomain]
-    : undefined;
+  // Kunden-Label nur bei verifiziertem Absender: Eine Kundenadresse, die
+  // lediglich irgendwo im Text steht, ist fälschbar (siehe parse.ts).
+  const customerName =
+    email.senderVerified && email.senderDomain ? DOMAIN_TO_CUSTOMER_LABEL[email.senderDomain] : undefined;
   const customerLabelId = customerName ? CUSTOMER_LABELS[customerName] : undefined;
 
   await addLabelToCard(env, card.id, CATEGORY_LABELS[classification.kategorie]);
@@ -54,14 +71,22 @@ async function processCard(env: Env, card: TrelloCard): Promise<void> {
   if (customerLabelId) await addLabelToCard(env, card.id, customerLabelId);
 
   if (!customerName) {
-    await addCommentToCard(
-      env,
-      card.id,
-      `⚠️ Viridis: Absenderdomain "${email.senderDomain ?? "unbekannt"}" ist keinem Kunden-Label zugeordnet. Bitte Viridis_Domain_Label_Mapping ergänzen.`
-    );
+    const hint =
+      email.senderDomain && !email.senderVerified
+        ? `Absenderadresse "${email.senderEmail}" wurde nur im Text gefunden, nicht im Header-Block — unverifiziert, daher kein Kunden-Label gesetzt.`
+        : `Absenderdomain "${email.senderDomain ?? "unbekannt"}" ist keinem Kunden-Label zugeordnet. Bitte Viridis_Domain_Label_Mapping ergänzen.`;
+    await addCommentToCard(env, card.id, `⚠️ Viridis: ${hint}`);
   }
 
-  if (classification.ist_system_benachrichtigung) {
+  // System-Benachrichtigung nur akzeptieren, wenn die Vendor-Domain aus dem
+  // verifizierten Header stammt. Sonst könnte jede Mail, die "cloudflare.com"
+  // im Text erwähnt, still im Backlog verschwinden statt eskaliert zu werden.
+  const trustedSystemSender =
+    email.senderVerified &&
+    !!email.senderDomain &&
+    KNOWN_SYSTEM_SENDER_DOMAINS.some((d) => email.senderDomain === d || email.senderDomain!.endsWith(`.${d}`));
+
+  if (classification.ist_system_benachrichtigung && trustedSystemSender) {
     await addCommentToCard(
       env,
       card.id,
@@ -72,10 +97,20 @@ async function processCard(env: Env, card: TrelloCard): Promise<void> {
   }
 
   const threshold = Number(env.AUTOMATION_CONFIDENCE_THRESHOLD || "0.85");
+  // Autoversand nur, wenn ALLE Bedingungen erfüllt sind:
+  // - Standard-Kategorie mit ausreichender Konfidenz,
+  // - kein Injection-Verdacht laut Klassifizierer,
+  // - Absender aus dem verifizierten Header-Block UND bekannter Kunde.
+  // Damit kann eine präparierte Mail keine Antwort an Dritte auslösen.
   const canAutomate =
     classification.kategorie === "Standard" &&
     classification.konfidenz >= threshold &&
-    !!email.senderEmail;
+    !classification.injection_verdacht &&
+    email.senderVerified &&
+    !!email.senderEmail &&
+    !!customerName;
+
+  let blockedReason: string | null = null;
 
   if (canAutomate && email.senderEmail) {
     const replyText = await generateStandardReply(env, {
@@ -83,32 +118,52 @@ async function processCard(env: Env, card: TrelloCard): Promise<void> {
       body: email.body,
     });
 
-    await sendEmail(env, {
-      to: email.senderEmail,
-      subject: email.subject,
-      text: replyText,
-      inReplyToSubject: email.subject,
-    });
+    const guard = checkReplySafety(replyText);
+    if (!guard.ok) {
+      blockedReason = guard.reason ?? "Antwort hat die Sicherheitsprüfung nicht bestanden.";
+    } else {
+      await sendEmail(env, {
+        to: email.senderEmail,
+        subject: email.subject,
+        text: replyText,
+        inReplyToSubject: email.subject,
+      });
 
-    await addCommentToCard(
-      env,
-      card.id,
-      `Viridis hat automatisiert geantwortet (Konfidenz ${classification.konfidenz.toFixed(2)}):\n\n${replyText}`
-    );
-    await moveCardToList(env, card.id, LISTS.doneByViridis);
-    await markCardComplete(env, card.id);
+      await addCommentToCard(
+        env,
+        card.id,
+        `Viridis hat automatisiert geantwortet (Konfidenz ${classification.konfidenz.toFixed(2)}):\n\n${replyText}`
+      );
+      await moveCardToList(env, card.id, LISTS.doneByViridis);
+      await markCardComplete(env, card.id);
 
-    try {
-      await logTicket(env, { cardName: card.name, cardUrl: card.shortUrl, status: "beantwortet" });
-    } catch (err) {
-      console.error(`Digest-Protokollierung fehlgeschlagen für Karte ${card.id}:`, err);
+      try {
+        await logTicket(env, { cardName: card.name, cardUrl: card.shortUrl, status: "beantwortet" });
+      } catch (err) {
+        console.error(`Digest-Protokollierung fehlgeschlagen für Karte ${card.id}:`, err);
+      }
+      return;
     }
-    return;
   }
 
-  const reasonNote = !email.senderEmail
-    ? " Zusätzlicher Grund: keine Absenderadresse erkannt — bitte Kartenformat prüfen (siehe parse.ts)."
-    : "";
+  const reasonParts: string[] = [];
+  if (classification.injection_verdacht) {
+    reasonParts.push("Injection-Verdacht: Der Text enthält Anweisungen an einen Assistenten oder Aufforderungen zu Links/Zahlungs-/Kontaktdaten — bitte mit besonderer Vorsicht prüfen.");
+  }
+  if (blockedReason) {
+    reasonParts.push(`Automatische Antwort verworfen (${blockedReason}).`);
+  }
+  if (!email.senderEmail) {
+    reasonParts.push("Keine Absenderadresse erkannt — bitte Kartenformat prüfen (siehe parse.ts).");
+  } else if (!email.senderVerified) {
+    reasonParts.push("Absenderadresse nicht aus dem Header-Block verifizierbar — kein Autoversand.");
+  } else if (!customerName && classification.kategorie === "Standard") {
+    reasonParts.push("Absenderdomain kein bekannter Kunde — kein Autoversand.");
+  }
+  if (classification.ist_system_benachrichtigung && !trustedSystemSender) {
+    reasonParts.push("Als System-Benachrichtigung eingestuft, aber Absender nicht verifiziert — sicherheitshalber eskaliert statt ins Backlog.");
+  }
+  const reasonNote = reasonParts.length > 0 ? " " + reasonParts.join(" ") : "";
   await addCommentToCard(
     env,
     card.id,
@@ -180,11 +235,18 @@ async function processWhatsAppCard(env: Env, card: TrelloCard): Promise<void> {
   }
 
   const replyText = await generateWhatsAppReplySuggestion(env, { body: card.desc });
+  const modelEscalated = replyText.trim().startsWith(ESCALATE_SENTINEL);
+
+  const warning = classification.injection_verdacht || modelEscalated
+    ? `⚠️ Injection-Verdacht: Die Nachricht enthält Anweisungen an einen Assistenten oder Aufforderungen zu Links/Zahlungs-/Kontaktdaten. Bitte mit besonderer Vorsicht prüfen.\n`
+    : "";
 
   await addCommentToCard(
     env,
     card.id,
-    `Viridis schlägt folgende Antwort vor (bitte manuell in WhatsApp Business einfügen):\nKategorie: ${classification.kategorie} · Dringlichkeit: ${classification.dringlichkeit} · Konfidenz: ${classification.konfidenz.toFixed(2)}\n\n${replyText}`
+    modelEscalated
+      ? `${warning}Viridis hat keinen Antwortvorschlag erstellt (Modell hat Eskalation angefordert).\nKategorie: ${classification.kategorie} · Dringlichkeit: ${classification.dringlichkeit} · Konfidenz: ${classification.konfidenz.toFixed(2)}`
+      : `${warning}Viridis schlägt folgende Antwort vor (bitte manuell in WhatsApp Business einfügen):\nKategorie: ${classification.kategorie} · Dringlichkeit: ${classification.dringlichkeit} · Konfidenz: ${classification.konfidenz.toFixed(2)}\n\n${replyText}`
   );
   await moveCardToList(env, card.id, LISTS.backlog);
 
@@ -262,22 +324,46 @@ async function runOnce(env: Env): Promise<{ processed: number; errors: number }>
   ];
 
   const dailyLimit = Number(env.DAILY_TICKET_LIMIT || "20");
+  const maxAttempts = Number(env.MAX_CARD_ATTEMPTS || "3");
   let dailyCount = await getDailyCount(env);
 
   let processed = 0;
   let errors = 0;
 
   for (const { channel, card } of queue) {
+    const targetList = channel === "email" ? LISTS.escalated : LISTS.backlog;
     try {
       if (dailyCount >= dailyLimit) {
-        await escalateForDailyLimit(env, card, dailyLimit, channel === "email" ? LISTS.escalated : LISTS.backlog);
-      } else if (channel === "email") {
+        await escalateForDailyLimit(env, card, dailyLimit, targetList);
+        processed++;
+        continue;
+      }
+
+      // Fehlversuche begrenzen: Eine Karte, die wiederholt scheitert,
+      // darf nicht unbegrenzt bezahlte API-Aufrufe erzeugen.
+      const attempts = await incrementCardAttempts(env, card.id);
+      if (attempts > maxAttempts) {
+        await addCommentToCard(
+          env,
+          card.id,
+          `⚠️ Viridis: Verarbeitung ist ${attempts - 1}-mal fehlgeschlagen. Karte wird ohne KI-Ergebnis ans Team eskaliert.`
+        );
+        await moveCardToList(env, card.id, targetList);
+        await clearCardAttempts(env, card.id);
+        processed++;
+        continue;
+      }
+
+      // Tageszähler VOR dem Modellaufruf erhöhen, damit auch fehlgeschlagene
+      // Aufrufe gegen das Limit zählen.
+      dailyCount = await incrementDailyCount(env);
+
+      if (channel === "email") {
         await processCard(env, card);
-        dailyCount = await incrementDailyCount(env);
       } else {
         await processWhatsAppCard(env, card);
-        dailyCount = await incrementDailyCount(env);
       }
+      await clearCardAttempts(env, card.id);
       processed++;
     } catch (err) {
       errors++;
@@ -285,7 +371,7 @@ async function runOnce(env: Env): Promise<{ processed: number; errors: number }>
       await addCommentToCard(
         env,
         card.id,
-        `⚠️ Viridis: Fehler bei der automatischen Verarbeitung — ${(err as Error).message}. Wird beim nächsten Lauf erneut versucht, oder bitte manuell prüfen.`
+        `⚠️ Viridis: Fehler bei der automatischen Verarbeitung — ${(err as Error).message}. Wird beim nächsten Lauf erneut versucht (max. ${maxAttempts} Versuche), oder bitte manuell prüfen.`
       ).catch(() => {});
     }
   }
@@ -311,7 +397,22 @@ export default {
     );
   },
 
+  /**
+   * Manueller Trigger (lokales Testen, Digest-Test). Ohne gesetztes
+   * ADMIN_TOKEN-Secret ist der Handler deaktiviert; mit Secret wird der
+   * Header "X-Viridis-Token" geprüft. Andernfalls könnte jeder mit der
+   * Worker-URL Läufe auslösen (Tageslimit aufbrauchen) oder per ?digest=1
+   * das Digest verschicken und das Protokoll löschen.
+   */
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (!env.ADMIN_TOKEN) {
+      return new Response("Not found", { status: 404 });
+    }
+    const provided = request.headers.get("X-Viridis-Token") ?? "";
+    if (!timingSafeEqual(provided, env.ADMIN_TOKEN)) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
     const url = new URL(request.url);
     if (url.searchParams.get("digest") === "1") {
       await sendDailyDigest(env);

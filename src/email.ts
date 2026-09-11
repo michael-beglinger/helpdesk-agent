@@ -1,4 +1,5 @@
 import type { Env } from "./types";
+import { sanitizeHeaderValue } from "./guard";
 
 /**
  * Versand über die Gmail API mit einem Google-Dienstkonto (domainweite
@@ -100,11 +101,18 @@ export function encodeHeaderValue(value: string): string {
   return `=?UTF-8?B?${toBase64(value)}?=`;
 }
 
+const EMAIL_ADDRESS_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
 export function buildRawMessage(input: { fromEmail: string; fromName: string; to: string; subject: string; text: string }): string {
+  // Header-Injection verhindern: Empfänger muss eine reine Adresse sein,
+  // Subject/Anzeigename dürfen keine Zeilenumbrüche enthalten.
+  if (!EMAIL_ADDRESS_RE.test(input.to)) {
+    throw new Error(`Ungültige Empfängeradresse: ${JSON.stringify(input.to)}`);
+  }
   const lines = [
-    `From: ${encodeHeaderValue(input.fromName)} <${input.fromEmail}>`,
+    `From: ${encodeHeaderValue(sanitizeHeaderValue(input.fromName))} <${input.fromEmail}>`,
     `To: ${input.to}`,
-    `Subject: ${encodeHeaderValue(input.subject)}`,
+    `Subject: ${encodeHeaderValue(sanitizeHeaderValue(input.subject))}`,
     `MIME-Version: 1.0`,
     `Content-Type: text/plain; charset="UTF-8"`,
     `Content-Transfer-Encoding: 8bit`,

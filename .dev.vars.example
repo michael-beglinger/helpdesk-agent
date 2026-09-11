@@ -5,3 +5,5 @@ ANTHROPIC_API_KEY=
 GOOGLE_SERVICE_ACCOUNT_EMAIL=
 GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=
 SLACK_WEBHOOK_URL=
+# Optional: schützt den manuellen fetch-Handler (Header X-Viridis-Token). Nicht gesetzt = Handler aus.
+ADMIN_TOKEN=

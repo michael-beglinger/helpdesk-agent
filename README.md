@@ -158,6 +158,7 @@ npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL
 npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
 npx wrangler secret put SLACK_WEBHOOK_URL
+npx wrangler secret put ADMIN_TOKEN   # optional, nur für den manuellen fetch-Handler
 ```
 
 Bei `GOOGLE_SERVICE_ACCOUNT_EMAIL` den Wert des Felds `client_email` aus der
@@ -188,8 +189,9 @@ zur Winterzeit, zurück auf `0 16 * * *` zur Sommerzeit) und neu deployen —
 oder die 1-Stunden-Abweichung im Winter einfach in Kauf nehmen.
 
 **Digest manuell testen**, ohne bis 18 Uhr zu warten: die Worker-URL mit
-`?digest=1` aufrufen, z. B.
-`https://viridis-helpdesk.beglingerpartners.workers.dev/?digest=1`.
+`?digest=1` und dem Header `X-Viridis-Token` aufrufen (siehe Abschnitt
+"Sicherheit"). Ohne gesetztes `ADMIN_TOKEN`-Secret ist dieser Endpunkt
+deaktiviert.
 
 ## Lokal testen
 
@@ -201,6 +203,45 @@ npm run dev
 `wrangler dev` startet einen lokalen Server; ein Aufruf der angezeigten URL im
 Browser oder per `curl` löst einen Durchlauf aus (siehe `fetch`-Handler in
 `src/index.ts` — nützlich zum Testen, im Cron-Betrieb nicht nötig).
+
+## Sicherheit: Prompt-Injection und Vertrauensgrenzen
+
+Kartentitel und -beschreibung stammen vollständig vom externen Absender.
+Deshalb gelten folgende Schutzmassnahmen (Stand September 2026):
+
+- **Absender-Verifikation** (`src/parse.ts`): Eine Adresse gilt nur als
+  verifiziert, wenn sie aus einer `From:`/`Von:`-Zeile in den ersten vier
+  Zeilen der Beschreibung stammt (Header-Block von Trellos "E-Mail an
+  Board"). Adressen irgendwo im Text sind fälschbar und werden nur zur
+  Anzeige verwendet. Sobald das echte Kartenformat bekannt ist, sollte die
+  Verifikation ausschliesslich aus dem Header-Feld abgeleitet werden.
+- **Autoversand nur bei verifiziertem, bekanntem Kunden** (`src/index.ts`):
+  zusätzlich zu Standard-Kategorie und Konfidenz muss der Absender
+  verifiziert UND in `DOMAIN_TO_CUSTOMER_LABEL` sein. Damit kann eine
+  präparierte Mail keine Antwort von `helpdesk@` an Dritte auslösen.
+- **System-Benachrichtigung nur bei verifizierter Vendor-Domain**: Sonst
+  Eskalation statt stillem Backlog.
+- **`injection_verdacht`** im Klassifizierungs-JSON: erkennt Anweisungen an
+  Assistenten, Aufforderungen zu Links/Zahlungs-/Kontaktdaten, Rollenwechsel.
+  `true` erzwingt Eskalation und wird im Trello-Kommentar ausgewiesen.
+- **Notausgang für das Modell**: Der Antwortgenerator darf statt eines Texts
+  `ESCALATE` zurückgeben; der Code eskaliert dann.
+- **Output-Guard vor dem Versand** (`src/guard.ts`): Antwort wird verworfen
+  und eskaliert, wenn sie URLs, IBAN-/Kartennummern, Krypto-Adressen oder
+  Telefonnummern enthält, die Pflichtsignatur fehlt oder die Länge
+  ausserhalb 40–2500 Zeichen liegt.
+- **Header-Injection**: Subject/Anzeigename werden von Zeilenumbrüchen
+  bereinigt, der Empfänger muss eine einzelne reine Adresse sein.
+- **Fehlversuchs-Limit pro Karte** (`MAX_CARD_ATTEMPTS`, Default 3) und
+  Tageszähler *vor* dem Modellaufruf: Eine Karte, die das Modell zu
+  Nicht-JSON verleitet, kann keine unbegrenzten API-Kosten erzeugen.
+- **fetch-Handler geschützt**: ohne Secret `ADMIN_TOKEN` deaktiviert (404);
+  mit Secret muss der Header `X-Viridis-Token` gesetzt sein. Manueller
+  Digest-Test also mit:
+  `curl -H "X-Viridis-Token: <token>" "https://viridis-helpdesk.beglingerpartners.workers.dev/?digest=1"`
+
+Neues Secret setzen: `npx wrangler secret put ADMIN_TOKEN` (z. B. Ausgabe
+von `openssl rand -hex 32`).
 
 ## Unbedingt vor dem produktiven Einsatz prüfen
 
