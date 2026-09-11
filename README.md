@@ -235,6 +235,10 @@ Deshalb gelten folgende Schutzmassnahmen (Stand September 2026):
 - **Fehlversuchs-Limit pro Karte** (`MAX_CARD_ATTEMPTS`, Default 3) und
   Tageszähler *vor* dem Modellaufruf: Eine Karte, die das Modell zu
   Nicht-JSON verleitet, kann keine unbegrenzten API-Kosten erzeugen.
+- **Keine still liegen bleibenden Karten**: Scheitert die Verarbeitung
+  nach dem Labeln (z. B. beim Versand), wird die Karte sofort eskaliert
+  (Liste + Slack), statt unbemerkt in der Inbox zu bleiben. API-Fehlertexte
+  landen nur im Worker-Log, nicht im Trello-Kommentar.
 - **fetch-Handler geschützt**: ohne Secret `ADMIN_TOKEN` deaktiviert (404);
   mit Secret muss der Header `X-Viridis-Token` gesetzt sein. Manueller
   Digest-Test also mit:

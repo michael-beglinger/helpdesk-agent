@@ -1,6 +1,7 @@
 import {
   addCommentToCard,
   addLabelToCard,
+  getCard,
   getCardsInList,
   markCardComplete,
   moveCardToList,
@@ -307,6 +308,66 @@ async function escalateForDailyLimit(
   }
 }
 
+/**
+ * Fehlerbehandlung nach einem gescheiterten Verarbeitungsversuch.
+ *
+ * Trägt die Karte bereits ein Kategorie-Label (der Fehler trat also NACH dem
+ * Labeln auf, z. B. beim Antwortversand), gilt sie für isUnprocessed als
+ * erledigt und käme nie wieder in die Queue — sie würde still in der Inbox
+ * liegen bleiben. Solche Karten werden deshalb sofort eskaliert (Liste +
+ * Slack). Karten ohne Label werden beim nächsten Lauf erneut versucht,
+ * begrenzt durch MAX_CARD_ATTEMPTS.
+ */
+async function handleProcessingFailure(
+  env: Env,
+  card: TrelloCard,
+  targetList: string,
+  maxAttempts: number
+): Promise<void> {
+  let alreadyLabelled = false;
+  try {
+    alreadyLabelled = !isUnprocessed(await getCard(env, card.id));
+  } catch (err) {
+    console.error(`Kartenstatus nach Fehler nicht abrufbar (${card.id}):`, err);
+  }
+
+  if (!alreadyLabelled) {
+    await addCommentToCard(
+      env,
+      card.id,
+      `⚠️ Viridis: Fehler bei der automatischen Verarbeitung. Wird beim nächsten Lauf erneut versucht (max. ${maxAttempts} Versuche). Details im Worker-Log.`
+    ).catch(() => {});
+    return;
+  }
+
+  await addCommentToCard(
+    env,
+    card.id,
+    `⚠️ Viridis: Fehler nach der Klassifizierung (z. B. beim Antwortversand). Karte wird ans Team eskaliert, damit sie nicht liegen bleibt. Bitte prüfen, ob bereits eine Antwort an den Kunden gegangen ist. Details im Worker-Log.`
+  ).catch(() => {});
+  await moveCardToList(env, card.id, targetList).catch((e) =>
+    console.error(`Eskalation nach Fehler fehlgeschlagen (${card.id}):`, e)
+  );
+  await clearCardAttempts(env, card.id).catch(() => {});
+
+  try {
+    await notifySlackEscalation(env, {
+      cardName: card.name,
+      cardUrl: card.shortUrl,
+      kategorie: "—",
+      dringlichkeit: "—",
+      begruendung: "Verarbeitungsfehler nach der Klassifizierung — Karte wurde ans Team eskaliert, bitte manuell prüfen.",
+    });
+  } catch (e) {
+    console.error(`Slack-Benachrichtigung (Fehler-Eskalation) fehlgeschlagen für Karte ${card.id}:`, e);
+  }
+  try {
+    await logTicket(env, { cardName: card.name, cardUrl: card.shortUrl, status: "eskaliert" });
+  } catch (e) {
+    console.error(`Digest-Protokollierung fehlgeschlagen für Karte ${card.id}:`, e);
+  }
+}
+
 interface QueueItem {
   channel: "email" | "whatsapp";
   card: TrelloCard;
@@ -367,12 +428,10 @@ async function runOnce(env: Env): Promise<{ processed: number; errors: number }>
       processed++;
     } catch (err) {
       errors++;
+      // Details nur ins Log: Fehlertexte der APIs können Kundentext oder
+      // interne Angaben enthalten und gehören nicht in den Trello-Kommentar.
       console.error(`Fehler bei Karte ${card.id} (${card.name}):`, err);
-      await addCommentToCard(
-        env,
-        card.id,
-        `⚠️ Viridis: Fehler bei der automatischen Verarbeitung — ${(err as Error).message}. Wird beim nächsten Lauf erneut versucht (max. ${maxAttempts} Versuche), oder bitte manuell prüfen.`
-      ).catch(() => {});
+      await handleProcessingFailure(env, card, targetList, maxAttempts);
     }
   }
 

@@ -26,6 +26,12 @@ export async function getCardsInList(env: Env, listId: string): Promise<TrelloCa
   return res.json();
 }
 
+/** Aktueller Stand einer einzelnen Karte (z. B. um nach einem Fehler zu prüfen, ob sie bereits Labels trägt). */
+export async function getCard(env: Env, cardId: string): Promise<TrelloCard> {
+  const res = await trelloFetch(env, `/cards/${cardId}?fields=id,name,desc,idList,labels,shortUrl`);
+  return res.json();
+}
+
 /** Setzt Labels auf einer Karte (ersetzt keine bestehenden, fügt hinzu). */
 export async function addLabelToCard(env: Env, cardId: string, labelId: string): Promise<void> {
   await trelloFetch(env, `/cards/${cardId}/idLabels`, {
