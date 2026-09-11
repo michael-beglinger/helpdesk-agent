@@ -31,3 +31,20 @@ export function extractEmailFromCard(card: TrelloCard): ExtractedEmail {
     body: card.desc,
   };
 }
+
+/**
+ * Extrahiert den Kundennamen aus dem Titel einer manuell angelegten
+ * WhatsApp-Karte. Konvention (siehe README): "<Kunde> – New WhatsApp Request".
+ *
+ * ACHTUNG: Reine Team-Konvention, nicht von Trello erzwungen. Erwartet wird
+ * der Kundenname als Präfix vor dem ersten Trenner " - " / " – " / " — "
+ * (Bindestrich, En- oder Em-Dash, jeweils von Leerzeichen umgeben). Ohne
+ * einen solchen Trenner wird NICHT der gesamte Titel als Name zurückgegeben
+ * (Gefahr stiller Fehlzuordnungen) — es wird null geliefert.
+ */
+export function extractCustomerNameFromWhatsAppCard(card: TrelloCard): string | null {
+  const match = card.name.match(/^\s*(.+?)\s[-–—]\s/);
+  if (!match) return null;
+  const name = match[1].trim();
+  return name.length > 0 ? name : null;
+}

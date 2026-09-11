@@ -8,7 +8,7 @@ import {
 import { classifyEmail, classifyWhatsAppMessage } from "./classify";
 import { generateStandardReply, generateWhatsAppReplySuggestion } from "./reply";
 import { sendEmail } from "./email";
-import { extractEmailFromCard } from "./parse";
+import { extractCustomerNameFromWhatsAppCard, extractEmailFromCard } from "./parse";
 import { notifySlackEscalation } from "./slack";
 import { logTicket, sendDailyDigest } from "./digest";
 import {
@@ -21,6 +21,7 @@ import {
   CATEGORY_LABELS,
   CUSTOMER_LABELS,
   DOMAIN_TO_CUSTOMER_LABEL,
+  findCustomerLabelIdByName,
   LISTS,
   URGENCY_LABELS,
 } from "./config";
@@ -141,16 +142,32 @@ async function processCard(env: Env, card: TrelloCard): Promise<void> {
 
 /**
  * WhatsApp-Pendant zu processCard: Kartenbeschreibung ist die rohe
- * WhatsApp-Nachricht (manuell vom Team angelegt, siehe README). Kein
- * Kunden-Label (Telefonnummer-Zuordnung noch nicht implementiert) und kein
+ * WhatsApp-Nachricht (manuell vom Team angelegt, siehe README). Kunden-Label
+ * wird aus dem Kartentitel abgeleitet (Konvention "<Kunde> – ...", siehe
+ * extractCustomerNameFromWhatsAppCard in parse.ts) und case-insensitiv gegen
+ * CUSTOMER_LABELS aufgelöst — keine Telefonnummer-Zuordnung. Kein
  * automatischer Versand — Viridis schlägt nur eine Antwort als Kommentar
  * vor, die manuell in WhatsApp Business eingefügt wird.
  */
 async function processWhatsAppCard(env: Env, card: TrelloCard): Promise<void> {
   const classification = await classifyWhatsAppMessage(env, { body: card.desc });
 
+  const customerNameRaw = extractCustomerNameFromWhatsAppCard(card);
+  const customerLabelId = customerNameRaw ? findCustomerLabelIdByName(customerNameRaw) : undefined;
+
   await addLabelToCard(env, card.id, CATEGORY_LABELS[classification.kategorie]);
   await addLabelToCard(env, card.id, URGENCY_LABELS[classification.dringlichkeit]);
+  if (customerLabelId) await addLabelToCard(env, card.id, customerLabelId);
+
+  if (!customerLabelId) {
+    await addCommentToCard(
+      env,
+      card.id,
+      customerNameRaw
+        ? `⚠️ Viridis: Name "${customerNameRaw}" im Kartentitel ist keinem Kunden-Label zugeordnet. Bitte Kartentitel oder CUSTOMER_LABELS in config.ts prüfen.`
+        : `⚠️ Viridis: Kein Kundenname im Kartentitel erkannt (erwartet "<Kunde> – ..."). Kein Kunden-Label gesetzt.`
+    );
+  }
 
   if (classification.ist_system_benachrichtigung) {
     await addCommentToCard(

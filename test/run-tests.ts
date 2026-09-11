@@ -3,8 +3,8 @@
  * (Absender-Extraktion, Domain-Mapping, "unbearbeitet"-Erkennung).
  * Ausführen mit: npm test  (nutzt tsx, kein Build-Schritt nötig)
  */
-import { extractEmailFromCard } from "../src/parse";
-import { CATEGORY_LABELS, DOMAIN_TO_CUSTOMER_LABEL } from "../src/config";
+import { extractCustomerNameFromWhatsAppCard, extractEmailFromCard } from "../src/parse";
+import { CATEGORY_LABELS, CUSTOMER_LABELS, DOMAIN_TO_CUSTOMER_LABEL, findCustomerLabelIdByName } from "../src/config";
 import type { TrelloCard } from "../src/types";
 
 let failures = 0;
@@ -53,6 +53,66 @@ assertEqual(
 
 assertEqual(DOMAIN_TO_CUSTOMER_LABEL["richmondevents.com"], "Richmond Events", "Domain-Mapping: Richmond Events");
 assertEqual(DOMAIN_TO_CUSTOMER_LABEL["unbekannte-domain.xyz"], undefined, "Domain-Mapping: unbekannte Domain -> undefined");
+
+// --- extractCustomerNameFromWhatsAppCard ---
+
+assertEqual(
+  extractCustomerNameFromWhatsAppCard(makeCard("Richmond Events – New WhatsApp Request", "Hallo, ...")),
+  "Richmond Events",
+  "extrahiert Kundenname vor En-Dash-Trenner"
+);
+
+assertEqual(
+  extractCustomerNameFromWhatsAppCard(makeCard("tide ocean - New WhatsApp Request", "...")),
+  "tide ocean",
+  "extrahiert Kundenname vor Bindestrich-Trenner"
+);
+
+assertEqual(
+  extractCustomerNameFromWhatsAppCard(makeCard("NGIB — New WhatsApp Request", "...")),
+  "NGIB",
+  "extrahiert Kundenname vor Em-Dash-Trenner"
+);
+
+assertEqual(
+  extractCustomerNameFromWhatsAppCard(makeCard("  Beni Huggel  –  New WhatsApp Request", "...")),
+  "Beni Huggel",
+  "trimmt umgebende Leerzeichen"
+);
+
+assertEqual(
+  extractCustomerNameFromWhatsAppCard(makeCard("New WhatsApp Request", "...")),
+  null,
+  "gibt null zurück ohne erkennbaren Trenner"
+);
+
+assertEqual(
+  extractCustomerNameFromWhatsAppCard(makeCard("– New WhatsApp Request", "...")),
+  null,
+  "gibt null zurück bei leerem Namen vor dem Trenner"
+);
+
+assertEqual(
+  extractCustomerNameFromWhatsAppCard(makeCard("Richmond Events – Urgent – New WhatsApp Request", "...")),
+  "Richmond Events",
+  "nutzt bei mehreren Trennern den ersten"
+);
+
+// --- findCustomerLabelIdByName ---
+
+assertEqual(findCustomerLabelIdByName("Richmond Events"), CUSTOMER_LABELS["Richmond Events"], "exakter Match");
+
+assertEqual(
+  findCustomerLabelIdByName("richmond events"),
+  CUSTOMER_LABELS["Richmond Events"],
+  "case-insensitiver Match"
+);
+
+assertEqual(findCustomerLabelIdByName("  NGIB  "), CUSTOMER_LABELS["NGIB"], "toleriert umgebende Leerzeichen");
+
+assertEqual(findCustomerLabelIdByName("Unbekannter Kunde"), undefined, "unbekannter Name -> undefined");
+
+assertEqual(findCustomerLabelIdByName("NGI"), undefined, "kein Teilstring-Match (NGI matcht nicht NGIB)");
 
 // --- Kategorie-Labels vollständig ---
 

@@ -37,6 +37,14 @@ Support-Nachricht an WhatsApp Business schickt, legt jemand aus dem Team eine
 Karte an mit
 
 - **Name:** `<Kunde> – New WhatsApp Request`
+  Wichtig: `<Kunde>` muss (Gross-/Kleinschreibung egal) exakt einem
+  Kunden-Namen aus `CUSTOMER_LABELS` in `src/config.ts` entsprechen (aktuell
+  z.B. "Richmond Events", "tide ocean", "Runge Pharma", "Internal", "Beni
+  Huggel", "NGIB") und durch " – " (Leerzeichen-Gedankenstrich-Leerzeichen;
+  Bindestrich "-" oder Halbgeviertstrich "—" funktionieren ebenfalls) vom
+  Rest des Titels getrennt sein. Ohne diesen Trenner oder bei einem nicht
+  zugeordneten Namen wird kein Kunden-Label gesetzt und ein Warnkommentar an
+  der Karte hinterlassen.
 - **Beschreibung:** der reine Nachrichtentext, unverändert eingefügt.
 
 Ablauf pro Karte (`processWhatsAppCard` in `src/index.ts`):
@@ -45,9 +53,10 @@ Ablauf pro Karte (`processWhatsAppCard` in `src/index.ts`):
    `src/classify.ts`) — gleiches Kategorien-/Dringlichkeits-Schema wie E-Mail,
    aber ohne Absenderdomain/System-Benachrichtigungs-Erkennung über bekannte
    Vendor-Domains (bei WhatsApp nicht anwendbar).
-2. Kategorie- und Dringlichkeits-Label setzen. **Kein Kunden-Label** — eine
-   Telefonnummer→Kunde-Zuordnung analog zu `DOMAIN_TO_CUSTOMER_LABEL` gibt es
-   (noch) nicht.
+2. Kategorie- und Dringlichkeits-Label setzen sowie Kunden-Label anhand des
+   Kartentitels (`<Kunde> – ...`, case-insensitiver Abgleich gegen
+   `CUSTOMER_LABELS`) — siehe `extractCustomerNameFromWhatsAppCard` in
+   `src/parse.ts`. Keine Telefonnummer-Zuordnung.
 3. Antwortvorschlag generieren (`generateWhatsAppReplySuggestion` in
    `src/reply.ts`) und als Kommentar auf der Karte hinterlegen — **wird nie
    automatisch verschickt**. Ein Mitarbeiter kopiert den Vorschlag manuell in

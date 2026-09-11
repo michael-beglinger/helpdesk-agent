@@ -47,6 +47,18 @@ export const CUSTOMER_LABELS: Record<string, string> = {
 };
 
 /**
+ * Case-insensitive Suche nach einer Kunden-Label-ID anhand eines frei
+ * getippten Namens (z.B. aus einem WhatsApp-Kartentitel). Exakter
+ * Namensvergleich nach Trim/Lowercase — kein Teilstring-/Fuzzy-Match, um
+ * Verwechslungen zwischen ähnlichen Kundennamen auszuschliessen.
+ */
+export function findCustomerLabelIdByName(name: string): string | undefined {
+  const normalized = name.trim().toLowerCase();
+  const key = Object.keys(CUSTOMER_LABELS).find((k) => k.toLowerCase() === normalized);
+  return key ? CUSTOMER_LABELS[key] : undefined;
+}
+
+/**
  * Domain-zu-Kunden-Label-Zuordnung.
  * Entspricht Viridis_Domain_Label_Mapping.xlsx (Stand: von Mitch geprüft).
  * Domain in Kleinschreibung, ohne "www.".
