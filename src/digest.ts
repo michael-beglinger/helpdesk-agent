@@ -3,7 +3,7 @@ import { sendEmail } from "./email";
 
 const PREFIX = "ticket:";
 
-export type TicketStatus = "beantwortet" | "eskaliert";
+export type TicketStatus = "beantwortet" | "eskaliert" | "vorschlag";
 
 interface TicketLogEntry {
   cardName: string;
@@ -50,6 +50,7 @@ export async function sendDailyDigest(env: Env): Promise<void> {
 
   const beantwortet = entries.filter((e) => e.status === "beantwortet");
   const eskaliert = entries.filter((e) => e.status === "eskaliert");
+  const vorschlag = entries.filter((e) => e.status === "vorschlag");
 
   const sections: string[] = [];
   if (beantwortet.length > 0) {
@@ -65,6 +66,17 @@ export async function sendDailyDigest(env: Env): Promise<void> {
       [
         `Eskaliert (${eskaliert.length}):`,
         ...eskaliert.map(
+          (e, i) =>
+            `${i + 1}. ${e.cardName}${e.kategorie ? ` (${e.kategorie}${e.dringlichkeit ? ", " + e.dringlichkeit : ""})` : ""} — ${e.cardUrl}`
+        ),
+      ].join("\n")
+    );
+  }
+  if (vorschlag.length > 0) {
+    sections.push(
+      [
+        `WhatsApp – Antwortvorschlag erstellt (${vorschlag.length}):`,
+        ...vorschlag.map(
           (e, i) =>
             `${i + 1}. ${e.cardName}${e.kategorie ? ` (${e.kategorie}${e.dringlichkeit ? ", " + e.dringlichkeit : ""})` : ""} — ${e.cardUrl}`
         ),

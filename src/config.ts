@@ -19,6 +19,7 @@ export const LISTS = {
   inReview: "6985c8d5384992effdc0c2c0",
   done: "6985c8890ea5d7f51c2a8b44",
   doneByViridis: "6a71b63524bc0a430efd42bb", // "Done by Viridis" — automatisch beantwortete Tickets
+  whatsappInbox: "6aa133a2a74416b586504aec", // "WhatsApp Inbox (Agent)"
 } as const;
 
 export const CATEGORY_LABELS: Record<"Standard" | "Technical" | "Complaint" | "Unclear", string> = {

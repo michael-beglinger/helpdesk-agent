@@ -5,8 +5,8 @@ import {
   markCardComplete,
   moveCardToList,
 } from "./trello";
-import { classifyEmail } from "./classify";
-import { generateStandardReply } from "./reply";
+import { classifyEmail, classifyWhatsAppMessage } from "./classify";
+import { generateStandardReply, generateWhatsAppReplySuggestion } from "./reply";
 import { sendEmail } from "./email";
 import { extractEmailFromCard } from "./parse";
 import { notifySlackEscalation } from "./slack";
@@ -140,18 +140,71 @@ async function processCard(env: Env, card: TrelloCard): Promise<void> {
 }
 
 /**
+ * WhatsApp-Pendant zu processCard: Kartenbeschreibung ist die rohe
+ * WhatsApp-Nachricht (manuell vom Team angelegt, siehe README). Kein
+ * Kunden-Label (Telefonnummer-Zuordnung noch nicht implementiert) und kein
+ * automatischer Versand — Viridis schlägt nur eine Antwort als Kommentar
+ * vor, die manuell in WhatsApp Business eingefügt wird.
+ */
+async function processWhatsAppCard(env: Env, card: TrelloCard): Promise<void> {
+  const classification = await classifyWhatsAppMessage(env, { body: card.desc });
+
+  await addLabelToCard(env, card.id, CATEGORY_LABELS[classification.kategorie]);
+  await addLabelToCard(env, card.id, URGENCY_LABELS[classification.dringlichkeit]);
+
+  if (classification.ist_system_benachrichtigung) {
+    await addCommentToCard(
+      env,
+      card.id,
+      `Viridis: als automatisierte Nachricht erkannt (${classification.begruendung}). Kein Antwortvorschlag erstellt.`
+    );
+    await moveCardToList(env, card.id, LISTS.backlog);
+    return;
+  }
+
+  const replyText = await generateWhatsAppReplySuggestion(env, { body: card.desc });
+
+  await addCommentToCard(
+    env,
+    card.id,
+    `Viridis schlägt folgende Antwort vor (bitte manuell in WhatsApp Business einfügen):\nKategorie: ${classification.kategorie} · Dringlichkeit: ${classification.dringlichkeit} · Konfidenz: ${classification.konfidenz.toFixed(2)}\n\n${replyText}`
+  );
+  await moveCardToList(env, card.id, LISTS.backlog);
+
+  try {
+    await logTicket(env, {
+      cardName: card.name,
+      cardUrl: card.shortUrl,
+      status: "vorschlag",
+      kategorie: classification.kategorie,
+      dringlichkeit: classification.dringlichkeit,
+    });
+  } catch (err) {
+    console.error(`Digest-Protokollierung fehlgeschlagen für Karte ${card.id}:`, err);
+  }
+}
+
+/**
  * Tages-Rate-Limit erreicht: Karte wird ohne (kostenpflichtige) KI-
  * Klassifizierung direkt ans Team eskaliert, statt liegen zu bleiben.
  * Pro Tag wird nur einmal eine Slack-Warnung verschickt, nicht bei jeder
- * betroffenen Karte einzeln.
+ * betroffenen Karte einzeln. `targetList` unterscheidet E-Mail (Escalated)
+ * von WhatsApp (Backlog, da dort kein separates Eskalations-Listen-Konzept
+ * existiert) — das geteilte Tageslimit gilt für beide Kanäle gemeinsam,
+ * da es die gesamten Anthropic-Kosten begrenzen soll.
  */
-async function escalateForDailyLimit(env: Env, card: TrelloCard, limit: number): Promise<void> {
+async function escalateForDailyLimit(
+  env: Env,
+  card: TrelloCard,
+  limit: number,
+  targetList: string
+): Promise<void> {
   await addCommentToCard(
     env,
     card.id,
     `⚠️ Viridis: Tages-Limit von ${limit} automatisiert verarbeiteten Tickets erreicht. Karte wird ohne KI-Klassifizierung direkt ans Team eskaliert. Das Limit setzt sich um Mitternacht (UTC) zurück.`
   );
-  await moveCardToList(env, card.id, LISTS.escalated);
+  await moveCardToList(env, card.id, targetList);
 
   if (!(await hasAlertedToday(env))) {
     try {
@@ -175,9 +228,21 @@ async function escalateForDailyLimit(env: Env, card: TrelloCard, limit: number):
   }
 }
 
+interface QueueItem {
+  channel: "email" | "whatsapp";
+  card: TrelloCard;
+}
+
 async function runOnce(env: Env): Promise<{ processed: number; errors: number }> {
-  const cards = await getCardsInList(env, LISTS.inbox);
-  const unprocessed = cards.filter(isUnprocessed);
+  const [emailCards, whatsappCards] = await Promise.all([
+    getCardsInList(env, LISTS.inbox),
+    getCardsInList(env, LISTS.whatsappInbox),
+  ]);
+
+  const queue: QueueItem[] = [
+    ...emailCards.filter(isUnprocessed).map((card): QueueItem => ({ channel: "email", card })),
+    ...whatsappCards.filter(isUnprocessed).map((card): QueueItem => ({ channel: "whatsapp", card })),
+  ];
 
   const dailyLimit = Number(env.DAILY_TICKET_LIMIT || "20");
   let dailyCount = await getDailyCount(env);
@@ -185,12 +250,15 @@ async function runOnce(env: Env): Promise<{ processed: number; errors: number }>
   let processed = 0;
   let errors = 0;
 
-  for (const card of unprocessed) {
+  for (const { channel, card } of queue) {
     try {
       if (dailyCount >= dailyLimit) {
-        await escalateForDailyLimit(env, card, dailyLimit);
-      } else {
+        await escalateForDailyLimit(env, card, dailyLimit, channel === "email" ? LISTS.escalated : LISTS.backlog);
+      } else if (channel === "email") {
         await processCard(env, card);
+        dailyCount = await incrementDailyCount(env);
+      } else {
+        await processWhatsAppCard(env, card);
         dailyCount = await incrementDailyCount(env);
       }
       processed++;

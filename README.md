@@ -28,6 +28,37 @@ Gehört zu: `Viridis_Architektur_Trello.docx`, `Viridis_Klassifizierungsregeln.d
      Kommentar für das Team, **plus sofortige Slack-Benachrichtigung**
      (`src/slack.ts`).
 
+## WhatsApp Business (Antwortvorschlag, kein Autoversand)
+
+Zusätzlich zur E-Mail-Inbox prüft derselbe 5-Minuten-Cron die Liste
+**"WhatsApp Inbox (Agent)"**. Diese Karten werden **manuell** angelegt (kein
+Webhook, keine WhatsApp-Business-API-Anbindung): sobald ein Kunde eine
+Support-Nachricht an WhatsApp Business schickt, legt jemand aus dem Team eine
+Karte an mit
+
+- **Name:** `<Kunde> – New WhatsApp Request`
+- **Beschreibung:** der reine Nachrichtentext, unverändert eingefügt.
+
+Ablauf pro Karte (`processWhatsAppCard` in `src/index.ts`):
+
+1. Klassifizierung per Anthropic-API (`classifyWhatsAppMessage` in
+   `src/classify.ts`) — gleiches Kategorien-/Dringlichkeits-Schema wie E-Mail,
+   aber ohne Absenderdomain/System-Benachrichtigungs-Erkennung über bekannte
+   Vendor-Domains (bei WhatsApp nicht anwendbar).
+2. Kategorie- und Dringlichkeits-Label setzen. **Kein Kunden-Label** — eine
+   Telefonnummer→Kunde-Zuordnung analog zu `DOMAIN_TO_CUSTOMER_LABEL` gibt es
+   (noch) nicht.
+3. Antwortvorschlag generieren (`generateWhatsAppReplySuggestion` in
+   `src/reply.ts`) und als Kommentar auf der Karte hinterlegen — **wird nie
+   automatisch verschickt**. Ein Mitarbeiter kopiert den Vorschlag manuell in
+   WhatsApp Business.
+4. Karte nach "Backlog" verschieben (gleiche Liste, die auch E-Mail-System-
+   Benachrichtigungen erhält) und Eintrag für die Tageszusammenfassung
+   vermerken (Status `vorschlag`).
+
+Das Tages-Limit `DAILY_TICKET_LIMIT` für Anthropic-Aufrufe gilt kanalübergreifend
+für E-Mail und WhatsApp gemeinsam (ein gemeinsamer Zähler in `VIRIDIS_LOG`).
+
 Zusätzlich läuft einmal täglich um 18 Uhr (Schweizer Zeit) ein zweiter
 Cron-Trigger, der eine E-Mail mit allen seit dem letzten Lauf bearbeiteten
 echten Support-Anfragen (automatisiert beantwortet UND eskaliert, jeweils
