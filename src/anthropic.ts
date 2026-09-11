@@ -22,7 +22,12 @@ export async function callClaude(
     body: JSON.stringify({
       model: input.model ?? MODEL,
       max_tokens: input.maxTokens,
-      system: input.system,
+      // System-Prompts sind pro Aufrufer statisch und werden innerhalb eines
+      // Laufs (mehrere Karten) sowie über aufeinanderfolgende Cron-Läufe
+      // (alle 5 Minuten) wiederholt unverändert gesendet — Prompt-Caching
+      // spart hier den Grossteil der Input-Tokens. Ephemeral-TTL (5 Min.
+      // Default) passt zum Cron-Intervall.
+      system: [{ type: "text", text: input.system, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: input.userMessage }],
     }),
   });
