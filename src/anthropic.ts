@@ -10,7 +10,7 @@ const MODEL = "claude-sonnet-4-5";
  */
 export async function callClaude(
   env: Env,
-  input: { system: string; userMessage: string; maxTokens: number }
+  input: { system: string; userMessage: string; maxTokens: number; model?: string }
 ): Promise<string> {
   const res = await fetch(ANTHROPIC_API, {
     method: "POST",
@@ -20,7 +20,7 @@ export async function callClaude(
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: input.model ?? MODEL,
       max_tokens: input.maxTokens,
       system: input.system,
       messages: [{ role: "user", content: input.userMessage }],
