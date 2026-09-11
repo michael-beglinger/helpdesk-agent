@@ -20,7 +20,17 @@ const URL_RE = /\b(?:https?:\/\/|www\.)\S+/i;
 const IBAN_RE = /\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}\b/;
 const CARD_NUMBER_RE = /\b(?:\d[ -]?){13,19}\b/;
 const CRYPTO_RE = /\b(?:bc1[a-z0-9]{20,}|0x[a-fA-F0-9]{40})\b/;
-const PHONE_RE = /(?:\+|00)\d{1,3}[\s./-]?(?:\(?\d+\)?[\s./-]?){5,}/;
+/** Internationale Schreibweise: "+41 61 123 45 67", "0041 61 123 45 67". */
+const INTL_PHONE_RE = /(?:\+|00)\d{1,3}[\s./-]?(?:\(?\d+\)?[\s./-]?){5,}/;
+/**
+ * Nationale Schreibweise CH/DE/AT: führendes Trunk-Präfix "0" (statt
+ * Landesvorwahl), gefolgt von 6–11 weiteren Ziffern — deckt Schweizer
+ * (z. B. "079 123 45 67"), deutsche (z. B. "0151 1234567") und
+ * österreichische (z. B. "0664 123456") Nummern ab. Trennzeichen bewusst nur
+ * Leerzeichen/Schrägstrich/Bindestrich, KEIN Punkt — sonst würden
+ * Datumsangaben wie "01.04.2026" fälschlich als Telefonnummer erkannt.
+ */
+const NATIONAL_PHONE_RE = /\b0(?:[\s/-]?\d){6,11}\b/;
 
 export interface GuardResult {
   ok: boolean;
@@ -59,7 +69,7 @@ export function checkReplySafety(reply: string): GuardResult {
   if (CRYPTO_RE.test(text)) {
     return { ok: false, reason: "Antwort enthält eine Krypto-Wallet-Adresse." };
   }
-  if (PHONE_RE.test(text)) {
+  if (INTL_PHONE_RE.test(text) || NATIONAL_PHONE_RE.test(text)) {
     return { ok: false, reason: "Antwort enthält eine Telefonnummer." };
   }
   return { ok: true };

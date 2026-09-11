@@ -94,6 +94,16 @@ assertEqual(checkReplySafety(okReply.replace("Vorschlag", "Vorschlag, rufen Sie 
 assertEqual(checkReplySafety("Vielen Dank für Ihre Anfrage. Wir melden uns bis Freitag mit einem Terminvorschlag.").ok, false, "Guard: fehlende Signatur blockiert");
 assertEqual(checkReplySafety("Ok.").ok, false, "Guard: zu kurze Antwort blockiert");
 
+// --- Nationale Telefonnummern (CH/DE/AT) ---
+
+assertEqual(checkReplySafety(okReply.replace("Vorschlag", "Vorschlag, rufen Sie 079 123 45 67 an")).ok, false, "Guard: Schweizer Mobilnummer (national) blockiert");
+assertEqual(checkReplySafety(okReply.replace("Vorschlag", "Vorschlag, rufen Sie 044 123 45 67 an")).ok, false, "Guard: Schweizer Festnetznummer (national) blockiert");
+assertEqual(checkReplySafety(okReply.replace("Vorschlag", "Vorschlag, rufen Sie 0151 1234567 an")).ok, false, "Guard: Deutsche Mobilnummer (national) blockiert");
+assertEqual(checkReplySafety(okReply.replace("Vorschlag", "Vorschlag, rufen Sie 030-12345678 an")).ok, false, "Guard: Deutsche Festnetznummer mit Bindestrich blockiert");
+assertEqual(checkReplySafety(okReply.replace("Vorschlag", "Vorschlag, rufen Sie 0664/123456 an")).ok, false, "Guard: Österreichische Mobilnummer mit Schrägstrich blockiert");
+assertEqual(checkReplySafety(okReply.replace("Vorschlag", "Vorschlag, rufen Sie 01 2345678 an")).ok, false, "Guard: Österreichische Festnetznummer (Wien) blockiert");
+assertEqual(checkReplySafety(okReply.replace("Vorschlag", "Vorschlag, bis am 01.04.2026")).ok, true, "Guard: Datum mit führender Null wird NICHT als Telefonnummer erkannt");
+
 // --- sanitizeHeaderValue / buildRawMessage (Header-Injection) ---
 
 assertEqual(sanitizeHeaderValue("Betreff\r\nBcc: x@evil.example"), "Betreff Bcc: x@evil.example", "Zeilenumbrüche im Header werden entfernt");
