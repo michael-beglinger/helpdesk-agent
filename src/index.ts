@@ -14,12 +14,14 @@ import { notifySlackEscalation } from "./slack";
 import { logTicket, sendDailyDigest } from "./digest";
 import { checkReplySafety, ESCALATE_SENTINEL } from "./guard";
 import {
+  acquireCardLock,
   clearCardAttempts,
   getDailyCount,
   hasAlertedToday,
   incrementCardAttempts,
   incrementDailyCount,
   markAlertedToday,
+  releaseCardLock,
 } from "./ratelimit";
 import {
   CATEGORY_LABELS,
@@ -386,6 +388,7 @@ async function runOnce(env: Env): Promise<{ processed: number; errors: number }>
 
   const dailyLimit = Number(env.DAILY_TICKET_LIMIT || "20");
   const maxAttempts = Number(env.MAX_CARD_ATTEMPTS || "3");
+  const lockTtlSeconds = Number(env.CARD_LOCK_TTL_SECONDS || "300");
   let dailyCount = await getDailyCount(env);
 
   let processed = 0;
@@ -393,6 +396,16 @@ async function runOnce(env: Env): Promise<{ processed: number; errors: number }>
 
   for (const { channel, card } of queue) {
     const targetList = channel === "email" ? LISTS.escalated : LISTS.backlog;
+
+    // Pro-Karte-Lock: schützt vor doppelter Verarbeitung, falls sich zwei
+    // Läufe überlappen (höhere Cron-Frequenz oder ein Lauf, der bei hohem
+    // Ticketvolumen länger dauert als das Cron-Intervall). Siehe
+    // acquireCardLock in ratelimit.ts für Details/Grenzen.
+    if (!(await acquireCardLock(env, card.id, lockTtlSeconds))) {
+      console.log(`Karte ${card.id} übersprungen: bereits durch einen anderen Lauf gesperrt.`);
+      continue;
+    }
+
     try {
       if (dailyCount >= dailyLimit) {
         await escalateForDailyLimit(env, card, dailyLimit, targetList);
@@ -432,6 +445,10 @@ async function runOnce(env: Env): Promise<{ processed: number; errors: number }>
       // interne Angaben enthalten und gehören nicht in den Trello-Kommentar.
       console.error(`Fehler bei Karte ${card.id} (${card.name}):`, err);
       await handleProcessingFailure(env, card, targetList, maxAttempts);
+    } finally {
+      await releaseCardLock(env, card.id).catch((err) =>
+        console.error(`Lock-Freigabe fehlgeschlagen für Karte ${card.id}:`, err)
+      );
     }
   }
 

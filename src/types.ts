@@ -14,6 +14,8 @@ export interface Env {
   ADMIN_TOKEN?: string;
   /** Max. Fehlversuche pro Karte, bevor sie ohne KI-Ergebnis eskaliert wird (Default 3). */
   MAX_CARD_ATTEMPTS?: string;
+  /** TTL (Sekunden) für den Pro-Karte-Verarbeitungslock, verhindert doppelte Verarbeitung bei überlappenden Läufen (Default 300, min. 60). */
+  CARD_LOCK_TTL_SECONDS?: string;
   VIRIDIS_LOG: KVNamespace;
 }
 

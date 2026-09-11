@@ -11,6 +11,7 @@ import type { Env } from "./types";
 const TICKET_COUNT_PREFIX = "ratelimit:tickets:";
 const ALERTED_PREFIX = "ratelimit:alerted:";
 const ATTEMPTS_PREFIX = "attempts:card:";
+const LOCK_PREFIX = "lock:card:";
 const TTL_SECONDS = 60 * 60 * 48; // 2 Tage
 
 function todayUtc(): string {
@@ -59,4 +60,31 @@ export async function incrementCardAttempts(env: Env, cardId: string): Promise<n
 
 export async function clearCardAttempts(env: Env, cardId: string): Promise<void> {
   await env.VIRIDIS_LOG.delete(`${ATTEMPTS_PREFIX}${cardId}`);
+}
+
+/**
+ * Pro-Karte-Lock: verhindert, dass dieselbe Karte zweimal gleichzeitig
+ * verarbeitet wird (doppelte Autoantwort, doppelte Labels), falls sich zwei
+ * Worker-Läufe überlappen — z. B. bei höherer Cron-Frequenz oder wenn ein
+ * Lauf durch hohes Ticketvolumen länger dauert als das Cron-Intervall. Bei
+ * aktuell 5-Minuten-Cron und kurzer Verarbeitungszeit pro Karte ist das
+ * Risiko heute gering, wird mit steigendem Volumen aber relevant.
+ *
+ * Cloudflare KV kennt kein atomares compare-and-swap — zwischen `get` und
+ * `put` bleibt ein theoretisches Zeitfenster offen. Für den eigentlichen
+ * Zweck (zwei zeitversetzte, überlappende Cron-Läufe statt exakt
+ * gleichzeitiger Schreibzugriffe) reicht das in der Praxis aus.
+ */
+export async function acquireCardLock(env: Env, cardId: string, ttlSeconds: number): Promise<boolean> {
+  const key = `${LOCK_PREFIX}${cardId}`;
+  const existing = await env.VIRIDIS_LOG.get(key);
+  if (existing) return false;
+  // KV verlangt expirationTtl >= 60s; das schützt zusätzlich davor, dass ein
+  // abgestürzter Lauf die Karte dauerhaft sperrt.
+  await env.VIRIDIS_LOG.put(key, "1", { expirationTtl: Math.max(60, ttlSeconds) });
+  return true;
+}
+
+export async function releaseCardLock(env: Env, cardId: string): Promise<void> {
+  await env.VIRIDIS_LOG.delete(`${LOCK_PREFIX}${cardId}`);
 }
